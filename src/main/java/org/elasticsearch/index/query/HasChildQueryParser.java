@@ -130,11 +130,35 @@ public class HasChildQueryParser implements QueryParser {
             throw new QueryParsingException(parseContext.index(), "[has_child] requires 'type' field");
         }
 
+        // get a copy of the inner hits keys before creating the child query
+        // so that we can see if any child inner hits have been added
+        final Set<String> oldInnerHitsKeys = new HashSet<>();
+        if (currentInnerHits != null ) {
+            oldInnerHitsKeys.addAll(currentInnerHits.getInnerHits().keySet());
+        }
+
         Query innerQuery = iq.asQuery(childType);
 
         if (innerQuery == null) {
             return null;
         }
+
+        // any child inner hits have been added, we need to remove these,
+        // so that they can be added to our own inner hits as child inner hits
+        currentInnerHits = SearchContext.current().innerHits();
+        final HashMap<String, InnerHitsContext.BaseInnerHits> childInnerHits;
+        if (currentInnerHits != null ) {
+            // get the inner hits maps
+            final Map<String, InnerHitsContext.BaseInnerHits> innerHitsMap = currentInnerHits.getInnerHits();
+            // make a copy of it, and remove any old keys
+            childInnerHits = new HashMap<>(innerHitsMap);
+            childInnerHits.keySet().removeAll(oldInnerHitsKeys);
+            // remove all new keys from the inner hits map
+            innerHitsMap.keySet().retainAll(oldInnerHitsKeys);
+        } else {
+            childInnerHits = null;
+        }
+        
         innerQuery.setBoost(boost);
 
         DocumentMapper childDocMapper = parseContext.mapperService().documentMapper(childType);
@@ -146,7 +170,8 @@ public class HasChildQueryParser implements QueryParser {
         }
 
         if (innerHits != null) {
-            InnerHitsContext.ParentChildInnerHits parentChildInnerHits = new InnerHitsContext.ParentChildInnerHits(innerHits.v2(), innerQuery, null, childDocMapper);
+            // previously childInnerHits was always null, meaning inner hits only worked one level deep
+            InnerHitsContext.ParentChildInnerHits parentChildInnerHits = new InnerHitsContext.ParentChildInnerHits(innerHits.v2(), innerQuery, childInnerHits, childDocMapper);
             String name = innerHits.v1() != null ? innerHits.v1() : childType;
             parseContext.addInnerHits(name, parentChildInnerHits);
         }
